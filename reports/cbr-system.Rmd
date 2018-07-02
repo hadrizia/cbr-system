@@ -1,0 +1,50 @@
+---
+title: "CBR System"
+author: "Hadrizia Santos"
+date: "2 de julho de 2018"
+output: html_document
+---
+
+### 1. Carregando bibliotecas necessárias
+
+```{r, echo = TRUE, warning=FALSE, message=FALSE}
+library(readr)
+library(caret)
+library(dplyr)
+library(ggplot2)
+library(tidyverse)
+```
+
+### 2. Importando dados e particionando-os em treino e teste (validação)
+A partição será 80% para treino e 20% para teste.
+
+```{r}
+input <- read.csv(here::here('data/data.csv'))
+
+## gerando partição de 80% dos dados para treino
+smp_size <- floor(0.8 * nrow(input))
+
+## Setando a seed para fazer a partição reproduzível
+set.seed(123)
+
+## Particionando o dataset em dois: treino (80%) e teste (20%)
+train_ind <- sample(seq_len(nrow(input)), size = smp_size)
+train <- input[train_ind, ]
+test <- input[-train_ind, ]
+```
+
+### 3. Treinando um modelo usando KNN
+
+```{r}
+train[is.na(train)] <- 0
+
+model.knn <- caret::train(MSRP ~ .,
+                   data = train,
+                   method = "knn",
+                   tuneLength = 15)
+model.knn
+```
+
+```{r}
+pred <- predict(model.knn, test %>% select(-MSRP))
+```
