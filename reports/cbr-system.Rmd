@@ -5,6 +5,8 @@ date: "2 de julho de 2018"
 output: html_document
 ---
 
+Neste relatório será implementado um programa para estimar o preço (MSRP) de um carro a partir de suas características (como marca, modelo, ano de fabricação etc), utilizando KNN e particionando os dados em treino e teste.
+
 ### 1. Carregando bibliotecas necessárias
 
 ```{r, echo = TRUE, warning=FALSE, message=FALSE}
@@ -24,27 +26,54 @@ input <- read.csv(here::here('data/data.csv'))
 ## gerando partição de 80% dos dados para treino
 smp_size <- floor(0.8 * nrow(input))
 
+## selecionando feautures que acredito ser mais relevantes para o modelo
+data <- input %>% 
+  select(Year, Engine.Fuel.Type, Engine.HP,
+         Engine.Cylinders, Transmission.Type, Driven_Wheels, 
+         Vehicle.Size, Number.of.Doors, highway.MPG, 
+         city.mpg, Popularity, MSRP) %>% drop_na()
+
 ## Setando a seed para fazer a partição reproduzível
 set.seed(123)
 
 ## Particionando o dataset em dois: treino (80%) e teste (20%)
-train_ind <- sample(seq_len(nrow(input)), size = smp_size)
-train <- input[train_ind, ]
-test <- input[-train_ind, ]
+train_ind <- sample(seq_len(nrow(data)), size = smp_size)
+train <- data[train_ind, ]
+test <- data[-train_ind, ]
 ```
 
 ### 3. Treinando um modelo usando KNN
 
 ```{r}
-train[is.na(train)] <- 0
+fitControl <- trainControl(method = "repeatedcv",
+                           number = 5)
 
 model.knn <- caret::train(MSRP ~ .,
-                   data = train,
-                   method = "knn",
-                   tuneLength = 15)
+                  tuneGrid = expand.grid(k = 1:10),
+                  data = train,
+                  method = "knn",
+                  trControl = fitControl)
 model.knn
+```
+
+O melhor valor de k para o menor RMSE (RMSE é uma medida das diferenças entre valores previstos por um modelo e os valores observados) é k = `r toString(model.knn$bestTune)`. A seguir retreinei o modelo usando outro método para ver se o modelo é melhorado.
+
+```{r}
+grid <- expand.grid(k = model.knn$bestTune)
+tr <- trainControl(method = "optimism_boot")
+model.knn.retrain <- train(MSRP ~ ., 
+               data = train,
+               method = "knn",
+               tuneGrid = grid,
+               trControl = tr)
+model.knn.retrain
 ```
 
 ```{r}
 pred <- predict(model.knn, test %>% select(-MSRP))
+table <- table(as.factor(test$MSRP), as.factor(pred))
+confusionMatrix(pred, test$MSRP)
+
+
+levels(as.factor(test$MSRP)) == levels(as.factor(pred))
 ```
