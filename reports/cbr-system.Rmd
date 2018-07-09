@@ -7,7 +7,7 @@ output: html_document
 
 Neste relatório será implementado um programa para estimar o preço (MSRP) de um carro a partir de suas características (como marca, modelo, ano de fabricação etc), utilizando KNN e particionando os dados em treino e teste.
 
-### 1. Carregando bibliotecas necessárias
+### Carregando bibliotecas necessárias, importando e conhecendo os dados
 
 ```{r, echo = TRUE, warning=FALSE, message=FALSE}
 library(readr)
@@ -15,65 +15,107 @@ library(caret)
 library(dplyr)
 library(ggplot2)
 library(tidyverse)
+library(here)
+library(hydroGOF)
+input <- read.csv(here::here('data/data.csv'), stringsAsFactors = FALSE)
 ```
 
-### 2. Importando dados e particionando-os em treino e teste (validação)
-A partição será 80% para treino e 20% para teste.
+Os dados possuem as seguintes colunas:
+
+- `Make`: Marca;
+- `Model`: Modelo;
+- `Year`: Ano de fabricação;
+- `Engine.Fuel.Type`: Tipo de combustível do motor;
+- `Engine.HP`: Potência do motor;
+- `Engine.Cylinders`: Cilindros que o motor possui;
+- `Transmission.Type`: Tipo de transmissão de marcha;
+- `Driven_Wheels`: Rodas acionadas;
+- `Number.of.Doors`: Número de portas;
+- `Vehicle.Size`: Tamanho do veículo;
+- `Vehicle.Style`: Estilo do veículo;
+- `highway.MPG`: Milhas por galão em estrada;
+- `city.mpg`: Milhas por galão na cidade;
+- `Popularity`: A popularidade do carro;
+- `MSRP`: O valor do carro e a variável-alvo da predição.
+ 
+#### Selecionando as features
+
+As features selecionadas para compor o treinamento do modelo serão: **Make**, **Model**, **Year**, **Engine.HP**, **Engine.Cylinders**, **Number.of.Doors**, **highway.MPG**, **city.mpg** e **Popularity**.
 
 ```{r}
-input <- read.csv(here::here('data/data.csv'))
+# Selecionando as features + variável alvo (MSRP)
+input <- input %>%
+  select(Make, Model, Year, Engine.HP, Engine.Cylinders, Number.of.Doors,
+         highway.MPG, city.mpg, Popularity, MSRP)
+```
+
+### Particionando os dados
+
+Separa-se o conjunto de dados em dois subconjuntos disjuntos: treinamento e teste (validação), na proporção de 80% 20% do tamanho do cojunto original, respectivamente. 
+
+```{r}
+# Removendo linhas com N/A e tranformando variáveis categoricas em numericas
+input <- input %>% 
+  na.omit() %>%
+  mutate(
+    Make = as.numeric(factor(Make)),
+    Model = as.numeric(factor(Model))
+    )
 
 ## gerando partição de 80% dos dados para treino
 smp_size <- floor(0.8 * nrow(input))
-
-## selecionando feautures que acredito ser mais relevantes para o modelo
-data <- input %>% 
-  select(Year, Engine.Fuel.Type, Engine.HP,
-         Engine.Cylinders, Transmission.Type, Driven_Wheels, 
-         Vehicle.Size, Number.of.Doors, highway.MPG, 
-         city.mpg, Popularity, MSRP) %>% drop_na()
 
 ## Setando a seed para fazer a partição reproduzível
 set.seed(123)
 
 ## Particionando o dataset em dois: treino (80%) e teste (20%)
-train_ind <- sample(seq_len(nrow(data)), size = smp_size)
-train <- data[train_ind, ]
-test <- data[-train_ind, ]
+train_ind <- sample(seq_len(nrow(input)), size = smp_size)
+
+train <- input[train_ind, ]
+test <- input[-train_ind, ]
 ```
 
-### 3. Treinando um modelo usando KNN
+### Treinamento
+
+O método usado para gerar o modelo será o KNN. A métrica de escolha para o K utilizado pelo caret é o MSE (mean square error: erro quadrático médio), que é a medida das diferenças entre valores previstos por um modelo. E variar o K sistematicamente de 1 a 10 de modo a determinar o valor de K que produza o menor erro acumulado para todos os exemplos do conjunto de validação.
 
 ```{r}
-fitControl <- trainControl(method = "repeatedcv",
-                           number = 5)
+# Valor do preço do carro da validação
+real_MSRP <- c(test %>% select(MSRP))$MSRP
 
-model.knn <- caret::train(MSRP ~ .,
-                  tuneGrid = expand.grid(k = 1:10),
-                  data = train,
-                  method = "knn",
-                  trControl = fitControl)
-model.knn
+# Função que recebe um k e retorna o MSE dos dados preditos com os dados reais da validação
+train_k <- function(k_value){
+  model.knn <- caret::train(MSRP ~ .,
+                          tuneGrid = expand.grid(k = k_value),
+                          data = train,
+                          method = "knn")
+  pred_MSRP <- predict(model.knn, test %>% select(-MSRP))
+  mse(real_MSRP, pred_MSRP)
+}
+
+# Dataframe que receberá os resultados
+results <- setNames(data.frame(matrix(ncol = 2, nrow = 0)), c("K", "MSE"))
+
+# Variando k de 1 a 10 e preenchendo o dataframe
+for (k in c(1:10)){
+  row <- list(k, train_k(k))
+  results[nrow(results) + 1,] = row
+}
+
+#Exibindo tabela com valor de K e o MSE correspondente
+results %>%
+  select(K, MSE) %>% 
+  arrange(MSE)
 ```
 
-O melhor valor de k para o menor RMSE (RMSE é uma medida das diferenças entre valores previstos por um modelo e os valores observados) é k = `r toString(model.knn$bestTune)`. A seguir retreinei o modelo usando outro método para ver se o modelo é melhorado.
+### Resultados obtidos
+
+Como se pode observar na tabela e no gráfico abaixo, o melhor valor de K para que se minimizasse o valor do MSE é **k=1**. À medida que o k vai aumentando (ou seja, se prediz um valor baseado na média do preço dos K preços mais próximos) o erro vai aumentando também.
 
 ```{r}
-grid <- expand.grid(k = model.knn$bestTune)
-tr <- trainControl(method = "optimism_boot")
-model.knn.retrain <- train(MSRP ~ ., 
-               data = train,
-               method = "knn",
-               tuneGrid = grid,
-               trControl = tr)
-model.knn.retrain
-```
-
-```{r}
-pred <- predict(model.knn, test %>% select(-MSRP))
-table <- table(as.factor(test$MSRP), as.factor(pred))
-confusionMatrix(pred, test$MSRP)
-
-
-levels(as.factor(test$MSRP)) == levels(as.factor(pred))
+results %>% 
+  ggplot(aes(x = K, y = MSE, color="red")) +
+  geom_line() +
+  scale_x_continuous(breaks = seq(1, 10, 1)) + 
+  theme(legend.position="none")
 ```
